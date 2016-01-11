@@ -1,0 +1,154 @@
+import numpy as np
+import pandas as pd
+import sys
+import comtypes as ct
+from comtypes.client import CreateObject,GetModule
+from decimal import Decimal
+
+# Script to allow preliminary sizing of a pressure relief valve (PRV)
+# Assuming the gas/vapour release case
+# Following API Standard 520
+# "Sizing, Selection, and Installation of Pressure-relieving Devices"
+# "Part I - Sizing and Selection"
+# Following the Ninth Edition, July 2014
+# No warranty is given, express or implied
+# All units are in SI unless otherwise stated
+# Also selects valve designation as per API Standard 526
+# "Flanged Steel Pressure-relief Valves
+# Following the Sixth Edition, May 2009
+# Script version 0.2, 2016-01-10
+
+# Assumptions:
+
+# Vessel has hemispherical heads:
+#      This gives a larger vessel volume than any other head, 
+#      so it is a conservative assumption
+
+# Expected pressure downstream of PRV is atmospheric (101.3 kPa)
+#      
+Pdownstream = 101.3
+
+# Discharge Coefficient is 0.975
+#     Stated in API 520 that Kd = 0.975 for relief valves, 
+#     Alternatively Kd = 0.62 for rupture disks
+Kd = 0.975
+
+# Capacity Correction Factor (Kb) is equal to 1.0
+#     Only applies for balanced bellows valves
+#     For conventional and pilot-operated valves Kb = 1.0
+Kb = 1.0
+
+# Combination Correction Factor (Kc) is equal to 1.0
+#     Factor for installations with a rupture disk upstream of the PRV
+#     equals 0.9 when a rupture disk is installed in combination with a 
+#     PRV and the combination does not have a certified value
+Kc = 1.0
+
+# Environmental Factor is equal to 1.0
+FireEnvironment = 1
+
+# Hysys Connection - connects to the Active Case
+# Requires the user to input the location of the hysys.tlb file
+# May be different for every computer, located in hysys install directory
+locTLB = 'H:\AspenTech\Aspen HYSYS V8.4\hysys.tlb'
+GetModule(locTLB)
+
+
+
+hyApp = CreateObject('Hysys.Application')
+hyFile=hyApp.ActiveDocument
+StreamName = raw_input('Enter the Stream Name:\n')
+StreamObject = hyFile.Flowsheet.MaterialStreams.Item(StreamName)
+
+# Inputs from user and HYSYS go here
+VapourFraction = StreamObject.VapourFractionValue
+
+if VapourFraction != 1:
+    print'Error: please select a wholly vapour stream for this script!'
+    sys.exit()
+else:
+    x=1
+
+nDevices = raw_input('Number of pressure relieving devices:\n')
+ExpectedPressure = StreamObject.Pressure.GetValue('kPa')
+ExpectedTemperature = input('Maximum Expected Temperature (°C):\n')
+MolecularWeight = StreamObject.MolecularWeightValue
+
+
+# Create a duplicate of the stream as a fluid object for thermo calcs
+FluidObject = StreamObject.DuplicateFluid()
+kValue = FluidObject.VapourPhase.CpCpRValue
+zValue = FluidObject.VapourPhase.CompressibilityValue
+
+
+
+# Vessel Dimensions
+vLength = input('Vessel Length (m):\n')
+vDiameter = input('Vessel Diameter (m):\n')
+vHoldup = input('Liquid Holdup % in Vessel:\n')
+
+# Initial processing of inputs goes here
+nDevices = min(2,nDevices)
+DesignPressure = 1.1*ExpectedPressure
+P1 = DesignPressure
+MaxAccumulatedPressure = 1.21*DesignPressure
+
+# Temp needs to be converted to Kelvin but is easier to ask the user for Celsius
+ExpectedTemperature = ExpectedTemperature + 273.15
+
+# Vessel Volume Calculations, assumes hemispherical head
+# As hemispherical is most conservative
+vRadius = 0.5*vDiameter
+vVolume = np.pi * (vRadius**2) * vLength + 4/3 * np.pi * vRadius**3
+liquidVolume = vHoldup * vVolume    
+vapourVolume = vVolume - liquidVolume
+
+# Fire load 
+WettedArea = np.pi * vRadius * vLength
+FireLoadQ = 22.155  * FireEnvironment * WettedArea **0.82
+# Heat of Vap is in kJ/kg, need to convert to MJ/kg to match FireLoadQ
+HeatOfVap = StreamObject.MassHeatOfVapValue / 1000
+# Fire load in kg/s
+Wfire = FireLoadQ / (HeatOfVap*3600)
+# Blocked Load in kg/s
+Wblocked = StreamObject.MassFlow.GetValue('kg/s')
+# Find Actual Relief Load for Design
+Wreal = max(Wfire,Wblocked)*3600
+
+# Critical Flow Calculations:
+PcfRatio = (2/(kValue+1))**(kValue/(kValue-1))
+Pcf = PcfRatio * DesignPressure
+
+if Pcf >= Pdownstream:
+#   Relief Load Calculations for Critical Flow
+    cCoeff = 0.03948*(kValue*(2/(kValue+1))**((kValue+1)/(kValue-1)))**0.5
+    ReliefArea = (Wreal/(cCoeff * Kd * DesignPressure * Kb * Kc))*(ExpectedTemperature*zValue/MolecularWeight)**0.5
+elif Pcf > Pdownstream:
+    # Subcritical Flow Occurs
+    r = Pdownstream/P1
+    F2 = ((kValue/(kValue-1))*((r**(2/kValue)))*((1-r**((kValue-1)/kValue))/(1-r)))**0.5
+    ReliefArea = ((17.9*Wreal)/(F2*Kd*Kc))*(ExpectedTemperature*zValue/MolecularWeight*P1*(P1-Pdownstream))**0.5
+
+# Determines Designation of Valve Required:
+ReliefAreaIn = ReliefArea * 0.00155
+ReliefAreaIn
+Designation = 'No Designation'
+DesignatedSizeIn = 0
+DesignationTable = pd.Series([0.11,0.196,0.307,0.503,0.785,1.287,1.838,2.853,3.60,4.34,6.38,11.05,16.00,26.00],
+                             index=['D','E','F','G','H','J','K','L','M','N','P','Q','R','T'])
+
+for n in range ((len(DesignationTable)-1),0,-1):
+    if DesignationTable[n] > ReliefAreaIn:
+        Designation = DesignationTable.index[n]
+        DesignatedSizeIn = DesignationTable[n]
+    else:
+        Designation = Designation
+        DesignatedSizeIn = DesignatedSizeIn
+
+
+DesignatedSizemm = DesignatedSizeIn / 0.00155
+
+DesignatedSizemm = round(Decimal(DesignatedSizemm),2)
+ReliefAreaIn = round(Decimal(ReliefAreaIn),2)
+ReliefArea = round(Decimal(ReliefArea),2)
+print'\n\nRequired Valve Designation is API 526 Type',Designation,'\nWith an Orifice Area of:',DesignatedSizeIn,'in2 (',DesignatedSizemm,'mm2)\n','Minimum Orifice Area:',ReliefAreaIn,'in2 (',ReliefArea,'mm2)'
