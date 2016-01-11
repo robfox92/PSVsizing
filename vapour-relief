@@ -56,6 +56,13 @@ GetModule(locTLB)
 
 
 hyApp = CreateObject('Hysys.Application')
+
+if hyApp.SimulationCases.Count < 1:
+    print'Please open a HYSYS Case!'
+    sys.exit()
+else:
+    x=1
+
 hyFile=hyApp.ActiveDocument
 StreamName = raw_input('Enter the Stream Name:\n')
 StreamObject = hyFile.Flowsheet.MaterialStreams.Item(StreamName)
