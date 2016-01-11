@@ -16,7 +16,7 @@ from decimal import Decimal
 # Also selects valve designation as per API Standard 526
 # "Flanged Steel Pressure-relief Valves
 # Following the Sixth Edition, May 2009
-# Script version 0.2, 2016-01-10
+# version 0.2, 2016-01-10
 
 # Assumptions:
 
@@ -132,7 +132,7 @@ elif Pcf > Pdownstream:
 # Determines Designation of Valve Required:
 ReliefAreaIn = ReliefArea * 0.00155
 ReliefAreaIn
-Designation = 'No Designation'
+Designation = 'No Designation - Valve is too large'
 DesignatedSizeIn = 0
 DesignationTable = pd.Series([0.11,0.196,0.307,0.503,0.785,1.287,1.838,2.853,3.60,4.34,6.38,11.05,16.00,26.00],
                              index=['D','E','F','G','H','J','K','L','M','N','P','Q','R','T'])
